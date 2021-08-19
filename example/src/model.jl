@@ -1,19 +1,26 @@
 using MLDatasets: CIFAR10
 using Flux
 using CUDA
+using JLD2
 
-if has_cuda()
-    @info "CUDA is on"
-    device = gpu
-    CUDA.allowscalar(false)
-else
-    device = cpu
-end
+MODEL_PATH = joinpath(@__DIR__, "../model/")
 
 function load_data(mode=:train)
     train_x, train_y = mode === :train ? CIFAR10.traindata() : CIFAR10.testdata()
 
-    return Float32.(train_x) |> device, Flux.onehotbatch(train_y, 0:9) |> device
+    return Float32.(train_x), Flux.onehotbatch(train_y, 0:9)
+end
+
+function save_model(m, model_name::String)
+    jldsave(joinpath(MODEL_PATH, "$model_name.jld2"); model=cpu(m))
+end
+
+function get_model(model_name::String)
+    f = jldopen(joinpath(MODEL_PATH, "$model_name.jld2"))
+    model = f["model"]
+    close(f)
+
+    return model
 end
 
 function vgg16()
@@ -54,19 +61,41 @@ function vgg16()
         Dropout(0.5),
         Dense(4096, 10),
         softmax,
-    ) |> device
-end
-m = vgg16()
-loss(𝐱, y) = Flux.logitcrossentropy(m(𝐱), y)
-
-train_loader = Flux.DataLoader(load_data(:train), batchsize=128, shuffle=true)
-test_loader = Flux.DataLoader(load_data(:test), batchsize=128, shuffle=false)
-train_data = [(𝐱, 𝐲) for (𝐱, 𝐲) in train_loader] |> device
-
-function validate()
-    validation_losses = [loss(device(𝐱), device(𝐲)) for (𝐱, 𝐲) in test_loader]
-    @info "loss: $(sum(validation_losses)/length(test_loader))"
+    )
 end
 
-call_back = Flux.throttle(validate, 60, leading=false, trailing=true)
-Flux.@epochs 500 @time(Flux.train!(loss, params(m), train_data, Flux.ADAM(3f-4), cb=call_back))
+function train(model; batchsize=128, η₀=1f-2)
+    if has_cuda()
+        @info "CUDA is on"
+        device = gpu
+        CUDA.allowscalar(false)
+    else
+        device = cpu
+    end
+
+    train_loader = Flux.DataLoader(load_data(:train), batchsize=batchsize, shuffle=true)
+    test_loader = Flux.DataLoader(load_data(:test), batchsize=batchsize, shuffle=false)
+    train_data = [(𝐱, 𝐲) for (𝐱, 𝐲) in train_loader] |> device
+
+    m = model() |> device
+    loss(𝐱, y) = Flux.logitcrossentropy(m(𝐱), y)
+
+    losses = Float32[]
+    function validate()
+        validation_loss = sum(loss(device(𝐱), device(𝐲)) for (𝐱, 𝐲) in test_loader)/length(test_loader)
+        @info "loss: $validation_loss"
+
+        push!(losses, validation_loss)
+        if validation_loss == minimum(losses)
+            save_model(m, string(model))
+            @warn "'$(string(model))' updated!"
+        end
+    end
+
+    Flux.@epochs 100 @time begin
+        Flux.train!(loss, params(m), train_data, Flux.ADAM(η₀))
+        validate()
+    end
+
+    return m
+end
