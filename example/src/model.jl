@@ -17,36 +17,45 @@ function load_data(mode=:train)
 end
 
 function vgg16()
-    σ = relu
-
     return Chain(
         Conv((3, 3), 3=>64, pad=2, σ),
+        BatchNorm(64),
         Conv((3, 3), 64=>64, pad=2, σ),
+        BatchNorm(64),
         MaxPool((2, 2), stride=(2, 2)),
 
         Conv((3, 3), 64=>128, pad=2, σ),
+        BatchNorm(128),
         Conv((3, 3), 128=>128, pad=2, σ),
+        BatchNorm(128),
         MaxPool((2, 2), stride=(2, 2)),
 
         Conv((3, 3), 128=>256, pad=2, σ),
+        BatchNorm(256),
         Conv((3, 3), 256=>256, pad=2, σ),
+        BatchNorm(256),
         Conv((3, 3), 256=>256, pad=2, σ),
+        BatchNorm(256),
         MaxPool((2, 2), stride=(2, 2)),
 
         Conv((3, 3), 256=>512, pad=2, σ),
+        BatchNorm(512),
         Conv((3, 3), 512=>512, pad=2, σ),
+        BatchNorm(512),
         Conv((3, 3), 512=>512, pad=2, σ),
+        BatchNorm(512),
         MaxPool((2, 2), stride=(2, 2)),
 
         flatten,
 
         Dense(7*7*512, 4096, σ),
+        Dropout(0.5),
         Dense(4096, 4096, σ),
+        Dropout(0.5),
         Dense(4096, 10),
         softmax,
     ) |> device
 end
-
 m = vgg16()
 loss(𝐱, y) = Flux.logitcrossentropy(m(𝐱), y)
 
