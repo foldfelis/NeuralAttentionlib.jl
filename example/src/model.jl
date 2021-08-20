@@ -23,48 +23,48 @@ function get_model(model_name::String)
     return model
 end
 
-function vgg16()
+function vgg16(a)
     return Chain(
-        Conv((3, 3), 3=>64, pad=2, σ),
+        Conv((3, 3), 3=>64, pad=2, a),
         BatchNorm(64),
-        Conv((3, 3), 64=>64, pad=2, σ),
+        Conv((3, 3), 64=>64, pad=2, a),
         BatchNorm(64),
         MaxPool((2, 2), stride=(2, 2)),
 
-        Conv((3, 3), 64=>128, pad=2, σ),
+        Conv((3, 3), 64=>128, pad=2, a),
         BatchNorm(128),
-        Conv((3, 3), 128=>128, pad=2, σ),
+        Conv((3, 3), 128=>128, pad=2, a),
         BatchNorm(128),
         MaxPool((2, 2), stride=(2, 2)),
 
-        Conv((3, 3), 128=>256, pad=2, σ),
+        Conv((3, 3), 128=>256, pad=2, a),
         BatchNorm(256),
-        Conv((3, 3), 256=>256, pad=2, σ),
+        Conv((3, 3), 256=>256, pad=2, a),
         BatchNorm(256),
-        Conv((3, 3), 256=>256, pad=2, σ),
+        Conv((3, 3), 256=>256, pad=2, a),
         BatchNorm(256),
         MaxPool((2, 2), stride=(2, 2)),
 
-        Conv((3, 3), 256=>512, pad=2, σ),
+        Conv((3, 3), 256=>512, pad=2, a),
         BatchNorm(512),
-        Conv((3, 3), 512=>512, pad=2, σ),
+        Conv((3, 3), 512=>512, pad=2, a),
         BatchNorm(512),
-        Conv((3, 3), 512=>512, pad=2, σ),
+        Conv((3, 3), 512=>512, pad=2, a),
         BatchNorm(512),
         MaxPool((2, 2), stride=(2, 2)),
 
         flatten,
 
-        Dense(7*7*512, 4096, σ),
+        Dense(7*7*512, 4096, a),
         Dropout(0.5),
-        Dense(4096, 4096, σ),
+        Dense(4096, 4096, a),
         Dropout(0.5),
         Dense(4096, 10),
         softmax,
     )
 end
 
-function train(model; batchsize=128, η₀=1f-2)
+function train(model; batchsize=128, η₀=5e-4)
     if has_cuda()
         @info "CUDA is on"
         device = gpu
@@ -77,8 +77,8 @@ function train(model; batchsize=128, η₀=1f-2)
     test_loader = Flux.DataLoader(load_data(:test), batchsize=batchsize, shuffle=false)
     train_data = [(𝐱, 𝐲) for (𝐱, 𝐲) in train_loader] |> device
 
-    m = model() |> device
-    loss(𝐱, y) = Flux.logitcrossentropy(m(𝐱), y)
+    m = model(gelu) |> device
+    loss(𝐱, y) = Flux.crossentropy(m(𝐱), y)
 
     losses = Float32[]
     function validate()
@@ -92,9 +92,14 @@ function train(model; batchsize=128, η₀=1f-2)
         end
     end
 
-    Flux.@epochs 100 @time begin
-        Flux.train!(loss, params(m), train_data, Flux.ADAM(η₀))
-        validate()
+    opt = Flux.Descent(η₀)
+    for e in 1:50
+        @time begin
+            @info "epoch $e\n η = $(opt.eta)"
+            Flux.train!(loss, params(m), train_data, opt)
+            # (e ≥ 20) && (e%20 == 0) && (opt.eta /= 2)
+            validate()
+        end
     end
 
     return m
